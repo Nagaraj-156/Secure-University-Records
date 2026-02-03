@@ -121,11 +121,15 @@ serve(async (req) => {
       }
     } else if (role === 'student') {
       // Students can only access their own data
-      const { data: student } = await supabase
+      const { data: student, error: studentError } = await supabase
         .from('students')
         .select('id')
         .eq('user_id', user.id)
         .single();
+      
+      if (studentError) {
+        console.log(`No student record found for user ${user.id}: ${studentError.message}`);
+      }
       
       if (student) {
         allowedStudentIds = [student.id];
