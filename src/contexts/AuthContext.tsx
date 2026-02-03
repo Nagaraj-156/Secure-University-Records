@@ -130,7 +130,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return { error: error as Error };
     }
 
-    // If signup successful and we have a user, create their role
+    // If signup successful and we have a user, create their role and student record
     if (data.user) {
       // Update profile with full name
       await supabase
@@ -142,6 +142,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await supabase
         .from('user_roles')
         .insert({ user_id: data.user.id, role: selectedRole });
+
+      // If signing up as a student, create a student record
+      if (selectedRole === 'student') {
+        const enrollmentNumber = `STU${Date.now().toString().slice(-8)}`;
+        await supabase
+          .from('students')
+          .insert({
+            user_id: data.user.id,
+            full_name: fullName,
+            email: email,
+            enrollment_number: enrollmentNumber,
+            admission_year: new Date().getFullYear(),
+            semester: 1,
+          });
+      }
     }
 
     return { error: null };
