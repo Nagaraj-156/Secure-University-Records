@@ -1,1 +1,13 @@
 project_id = "wtpwxjdilbpioybswgty"
+
+[functions.get-student-data]
+verify_jwt = false
+
+[functions.bulk-upload]
+verify_jwt = false
+
+[functions.encryption]
+verify_jwt = false
+
+[functions.seed-data]
+verify_jwt = false
