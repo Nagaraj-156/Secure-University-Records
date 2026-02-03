@@ -49,29 +49,42 @@ serve(async (req) => {
 
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
     
     // Authenticate user
     const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
+    if (!authHeader?.startsWith('Bearer ')) {
       return new Response(JSON.stringify({ error: 'Unauthorized' }), {
         status: 401,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    const { data: { user }, error: authError } = await supabase.auth.getUser(
-      authHeader.replace('Bearer ', '')
-    );
+    const token = authHeader.replace('Bearer ', '');
 
-    if (authError || !user) {
+    // Create client with user context for JWT validation
+    const userClient = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
+
+    // Validate JWT using getClaims for ES256 compatibility
+    const { data: claimsData, error: claimsError } = await userClient.auth.getClaims(token);
+
+    if (claimsError || !claimsData?.claims) {
+      console.error('JWT validation failed:', claimsError);
       return new Response(JSON.stringify({ error: 'Invalid token' }), {
         status: 401,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
+
+    const userId = claimsData.claims.sub as string;
+    const userEmail = claimsData.claims.email as string;
+    console.log(`Authenticated user: ${userId} (${userEmail})`);
+
+    // Create service client for database operations
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     const url = new URL(req.url);
     const studentId = url.searchParams.get('student_id');
@@ -81,11 +94,11 @@ serve(async (req) => {
     const { data: userRole } = await supabase
       .from('user_roles')
       .select('role')
-      .eq('user_id', user.id)
+      .eq('user_id', userId)
       .single();
 
     const role = userRole?.role || 'student';
-    console.log(`Get student data: user=${user.id}, role=${role}, student=${studentId}, type=${dataType}`);
+    console.log(`Get student data: user=${userId}, role=${role}, student=${studentId}, type=${dataType}`);
 
     // Determine which student(s) the user can access
     let allowedStudentIds: string[] = [];
@@ -103,7 +116,7 @@ serve(async (req) => {
       const { data: assignments } = await supabase
         .from('faculty_assignments')
         .select('department_id')
-        .eq('faculty_user_id', user.id);
+        .eq('faculty_user_id', userId);
       
       const deptIds = assignments?.map(a => a.department_id) || [];
       
@@ -124,11 +137,11 @@ serve(async (req) => {
       const { data: student, error: studentError } = await supabase
         .from('students')
         .select('id')
-        .eq('user_id', user.id)
+        .eq('user_id', userId)
         .single();
       
       if (studentError) {
-        console.log(`No student record found for user ${user.id}: ${studentError.message}`);
+        console.log(`No student record found for user ${userId}: ${studentError.message}`);
       }
       
       if (student) {
@@ -237,7 +250,7 @@ serve(async (req) => {
 
     if (totalRecords > 0) {
       await supabase.from('encryption_events').insert({
-        user_id: user.id,
+        user_id: userId,
         event_type: 'decrypt',
         table_name: dataType,
         record_count: totalRecords,
@@ -245,7 +258,7 @@ serve(async (req) => {
       });
 
       await supabase.from('audit_logs').insert({
-        user_id: user.id,
+        user_id: userId,
         action: 'view_student_data',
         table_name: dataType,
         details: { 
@@ -255,7 +268,7 @@ serve(async (req) => {
       });
     }
 
-    console.log(`Retrieved ${totalRecords} decrypted records for user ${user.id}`);
+    console.log(`Retrieved ${totalRecords} decrypted records for user ${userId}`);
 
     return new Response(JSON.stringify({ success: true, data: result }), {
       status: 200,
