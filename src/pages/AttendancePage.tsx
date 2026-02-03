@@ -1,13 +1,23 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { BookOpen, Lock, Search, Filter, CheckCircle, XCircle, Calendar } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
+import { AddAttendanceDialog } from '@/components/attendance/AddAttendanceDialog';
+import { DeleteAttendanceDialog } from '@/components/attendance/DeleteAttendanceDialog';
 
 interface AttendanceRecord {
   id: string;
@@ -28,38 +38,46 @@ export default function AttendancePage() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSubject, setSelectedSubject] = useState<string>('all');
+  const [viewMode, setViewMode] = useState<'grid' | 'table'>('table');
+
+  const canManageRecords = isAdmin || isFaculty;
+
+  const fetchAttendance = useCallback(async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      const res = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-student-data?type=attendance`,
+        {
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+      const data = await res.json();
+      
+      if (data.success && data.data?.attendance) {
+        setAttendance(data.data.attendance);
+      }
+    } catch (error) {
+      console.error('Failed to fetch attendance:', error);
+      toast.error('Failed to load attendance');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    const fetchAttendance = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session) return;
-
-        const res = await fetch(
-          `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-student-data?type=attendance`,
-          {
-            headers: {
-              Authorization: `Bearer ${session.access_token}`,
-              'Content-Type': 'application/json',
-            },
-          }
-        );
-
-        const data = await res.json();
-        
-        if (data.success && data.data?.attendance) {
-          setAttendance(data.data.attendance);
-        }
-      } catch (error) {
-        console.error('Failed to fetch attendance:', error);
-        toast.error('Failed to load attendance');
-      } finally {
-        setLoading(false);
-      }
-    };
-
     fetchAttendance();
-  }, []);
+  }, [fetchAttendance]);
+
+  const handleRefresh = () => {
+    setLoading(true);
+    fetchAttendance();
+  };
 
   const subjects = [...new Set(attendance.map((a) => a.subject_name))];
 
@@ -77,19 +95,37 @@ export default function AttendancePage() {
   const totalCount = filteredAttendance.length;
   const attendancePercentage = totalCount > 0 ? Math.round((presentCount / totalCount) * 100) : 0;
 
+  const getStatusBadge = (status: string | null) => {
+    switch (status) {
+      case 'present':
+        return <Badge className="bg-success/10 text-success">Present</Badge>;
+      case 'absent':
+        return <Badge className="bg-destructive/10 text-destructive">Absent</Badge>;
+      case 'late':
+        return <Badge className="bg-warning/10 text-warning">Late</Badge>;
+      case 'excused':
+        return <Badge className="bg-primary/10 text-primary">Excused</Badge>;
+      default:
+        return <Badge variant="secondary">Unknown</Badge>;
+    }
+  };
+
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-display font-bold">Attendance Records</h1>
           <p className="text-muted-foreground">
-            {isStudent ? 'View your attendance history' : 'View student attendance records'}
+            {isStudent ? 'View your attendance history' : 'View and manage student attendance records'}
           </p>
         </div>
-        <Badge variant="outline" className="encrypted-badge w-fit">
-          <Lock className="w-4 h-4" />
-          <span>Data Encrypted</span>
-        </Badge>
+        <div className="flex items-center gap-3">
+          {canManageRecords && <AddAttendanceDialog onAttendanceAdded={handleRefresh} />}
+          <Badge variant="outline" className="encrypted-badge">
+            <Lock className="w-4 h-4" />
+            <span>Data Encrypted</span>
+          </Badge>
+        </div>
       </div>
 
       {/* Stats */}
@@ -179,7 +215,7 @@ export default function AttendancePage() {
         </CardContent>
       </Card>
 
-      {/* Attendance Grid */}
+      {/* Attendance Table */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -192,41 +228,71 @@ export default function AttendancePage() {
         </CardHeader>
         <CardContent>
           {loading ? (
-            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
-              {[...Array(28)].map((_, i) => (
-                <div key={i} className="shimmer h-16 rounded-lg"></div>
+            <div className="space-y-3">
+              {[...Array(10)].map((_, i) => (
+                <div key={i} className="shimmer h-14 rounded-lg"></div>
               ))}
             </div>
           ) : filteredAttendance.length === 0 ? (
             <div className="text-center py-12">
               <BookOpen className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
               <p className="text-muted-foreground">No attendance records found</p>
+              <p className="text-sm text-muted-foreground">
+                {isStudent
+                  ? 'Your attendance will appear here once recorded'
+                  : 'Add attendance using the Add Attendance button'}
+              </p>
             </div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
-              {filteredAttendance.slice(0, 35).map((record) => (
-                <div
-                  key={record.id}
-                  className={`p-3 rounded-lg text-center transition-all ${
-                    record.status === 'present'
-                      ? 'bg-success/10 border border-success/20'
-                      : 'bg-destructive/10 border border-destructive/20'
-                  }`}
-                >
-                  <p className="text-xs font-medium truncate">{record.subject_name}</p>
-                  <p className="text-lg font-bold">
-                    {format(new Date(record.attendance_date), 'dd')}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {format(new Date(record.attendance_date), 'MMM')}
-                  </p>
-                  {record.status === 'present' ? (
-                    <CheckCircle className="w-4 h-4 text-success mx-auto mt-1" />
-                  ) : (
-                    <XCircle className="w-4 h-4 text-destructive mx-auto mt-1" />
-                  )}
-                </div>
-              ))}
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    {canManageRecords && (
+                      <>
+                        <TableHead>Enrollment</TableHead>
+                        <TableHead>Student</TableHead>
+                      </>
+                    )}
+                    <TableHead>Subject</TableHead>
+                    <TableHead>Date</TableHead>
+                    <TableHead>Semester</TableHead>
+                    <TableHead>Status</TableHead>
+                    {canManageRecords && <TableHead className="w-16">Actions</TableHead>}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredAttendance.map((record) => (
+                    <TableRow key={record.id} className="table-row-hover">
+                      {canManageRecords && (
+                        <>
+                          <TableCell className="font-mono text-sm">
+                            {record.students?.enrollment_number || '-'}
+                          </TableCell>
+                          <TableCell>{record.students?.full_name || '-'}</TableCell>
+                        </>
+                      )}
+                      <TableCell className="font-medium">{record.subject_name}</TableCell>
+                      <TableCell>
+                        {format(new Date(record.attendance_date), 'dd MMM yyyy')}
+                      </TableCell>
+                      <TableCell>{record.semester}</TableCell>
+                      <TableCell>{getStatusBadge(record.status)}</TableCell>
+                      {canManageRecords && (
+                        <TableCell>
+                          <DeleteAttendanceDialog
+                            attendanceId={record.id}
+                            studentName={record.students?.full_name || 'Unknown'}
+                            subjectName={record.subject_name}
+                            date={format(new Date(record.attendance_date), 'dd MMM yyyy')}
+                            onAttendanceDeleted={handleRefresh}
+                          />
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             </div>
           )}
         </CardContent>

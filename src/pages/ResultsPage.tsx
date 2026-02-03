@@ -1,9 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   Table,
@@ -13,9 +12,11 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { GraduationCap, Lock, AlertTriangle, Search, Filter } from 'lucide-react';
+import { GraduationCap, Lock, Search, Filter } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
+import { AddMarkDialog } from '@/components/marks/AddMarkDialog';
+import { DeleteMarkDialog } from '@/components/marks/DeleteMarkDialog';
 
 interface MarkRecord {
   id: string;
@@ -40,43 +41,44 @@ export default function ResultsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSemester, setSelectedSemester] = useState<string>('all');
 
-  useEffect(() => {
-    const fetchMarks = async () => {
-      try {
-        const response = await supabase.functions.invoke('get-student-data', {
-          body: {},
-          method: 'GET',
-        });
+  const canManageRecords = isAdmin || isFaculty || isExamCell;
 
-        // Use query params approach
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session) return;
+  const fetchMarks = useCallback(async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
 
-        const res = await fetch(
-          `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-student-data?type=marks`,
-          {
-            headers: {
-              Authorization: `Bearer ${session.access_token}`,
-              'Content-Type': 'application/json',
-            },
-          }
-        );
-
-        const data = await res.json();
-        
-        if (data.success && data.data?.marks) {
-          setMarks(data.data.marks);
+      const res = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-student-data?type=marks`,
+        {
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json',
+          },
         }
-      } catch (error) {
-        console.error('Failed to fetch marks:', error);
-        toast.error('Failed to load results');
-      } finally {
-        setLoading(false);
-      }
-    };
+      );
 
-    fetchMarks();
+      const data = await res.json();
+      
+      if (data.success && data.data?.marks) {
+        setMarks(data.data.marks);
+      }
+    } catch (error) {
+      console.error('Failed to fetch marks:', error);
+      toast.error('Failed to load results');
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchMarks();
+  }, [fetchMarks]);
+
+  const handleRefresh = () => {
+    setLoading(true);
+    fetchMarks();
+  };
 
   const filteredMarks = marks.filter((mark) => {
     const matchesSearch = 
@@ -126,10 +128,13 @@ export default function ResultsPage() {
             {isStudent ? 'View your examination results' : 'View and manage student results'}
           </p>
         </div>
-        <Badge variant="outline" className="encrypted-badge w-fit">
-          <Lock className="w-4 h-4" />
-          <span>Marks Encrypted</span>
-        </Badge>
+        <div className="flex items-center gap-3">
+          {canManageRecords && <AddMarkDialog onMarkAdded={handleRefresh} />}
+          <Badge variant="outline" className="encrypted-badge">
+            <Lock className="w-4 h-4" />
+            <span>Marks Encrypted</span>
+          </Badge>
+        </div>
       </div>
 
       {/* Filters */}
@@ -188,7 +193,7 @@ export default function ResultsPage() {
               <p className="text-sm text-muted-foreground">
                 {isStudent
                   ? 'Your results will appear here once published'
-                  : 'Upload results using the Bulk Upload feature'}
+                  : 'Add results using the Add Mark button or Bulk Upload feature'}
               </p>
             </div>
           ) : (
@@ -196,7 +201,7 @@ export default function ResultsPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    {(isAdmin || isFaculty || isExamCell) && (
+                    {canManageRecords && (
                       <>
                         <TableHead>Enrollment</TableHead>
                         <TableHead>Student</TableHead>
@@ -208,6 +213,7 @@ export default function ResultsPage() {
                     <TableHead>Marks</TableHead>
                     <TableHead>Grade</TableHead>
                     <TableHead>Status</TableHead>
+                    {canManageRecords && <TableHead className="w-16">Actions</TableHead>}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -215,7 +221,7 @@ export default function ResultsPage() {
                     const grade = getGrade(mark.marks, mark.max_marks);
                     return (
                       <TableRow key={mark.id} className="table-row-hover">
-                        {(isAdmin || isFaculty || isExamCell) && (
+                        {canManageRecords && (
                           <>
                             <TableCell className="font-mono text-sm">
                               {mark.students?.enrollment_number || '-'}
@@ -243,6 +249,16 @@ export default function ResultsPage() {
                             {mark.is_published ? 'Published' : 'Pending'}
                           </Badge>
                         </TableCell>
+                        {canManageRecords && (
+                          <TableCell>
+                            <DeleteMarkDialog
+                              markId={mark.id}
+                              studentName={mark.students?.full_name || 'Unknown'}
+                              subjectName={mark.subject_name}
+                              onMarkDeleted={handleRefresh}
+                            />
+                          </TableCell>
+                        )}
                       </TableRow>
                     );
                   })}
