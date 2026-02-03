@@ -77,32 +77,44 @@ serve(async (req) => {
 
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
-    
-    // Get user from JWT
+    // Authenticate user
     const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
+    if (!authHeader?.startsWith('Bearer ')) {
       return new Response(JSON.stringify({ error: 'Unauthorized' }), {
         status: 401,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    const { data: { user }, error: authError } = await supabase.auth.getUser(
-      authHeader.replace('Bearer ', '')
-    );
+    const token = authHeader.replace('Bearer ', '');
 
-    if (authError || !user) {
+    // Create client with user context for JWT validation
+    const userClient = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
+
+    // Validate JWT using getClaims for ES256 compatibility
+    const { data: claimsData, error: claimsError } = await userClient.auth.getClaims(token);
+
+    if (claimsError || !claimsData?.claims) {
+      console.error('JWT validation failed:', claimsError);
       return new Response(JSON.stringify({ error: 'Invalid token' }), {
         status: 401,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
+    const userId = claimsData.claims.sub as string;
+    console.log(`Authenticated user for encryption: ${userId}`);
+
+    // Create service client for database operations
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
     const { action, data, table_name, record_id } = await req.json();
-    console.log(`Encryption request: action=${action}, table=${table_name}, user=${user.id}`);
+    console.log(`Encryption request: action=${action}, table=${table_name}, user=${userId}`);
 
     let result;
     let eventType: string;
@@ -162,7 +174,7 @@ serve(async (req) => {
 
     // Log encryption event
     await supabase.from('encryption_events').insert({
-      user_id: user.id,
+      user_id: userId,
       event_type: eventType,
       table_name: table_name || 'unknown',
       record_count: Array.isArray(data) ? data.length : 1,
@@ -171,7 +183,7 @@ serve(async (req) => {
 
     // Log to audit
     await supabase.from('audit_logs').insert({
-      user_id: user.id,
+      user_id: userId,
       action: `${action}_data`,
       table_name: table_name,
       record_id: record_id,
@@ -181,7 +193,7 @@ serve(async (req) => {
       },
     });
 
-    console.log(`Encryption ${action} completed successfully for user ${user.id}`);
+    console.log(`Encryption ${action} completed successfully for user ${userId}`);
 
     return new Response(JSON.stringify({ success: true, result }), {
       status: 200,
