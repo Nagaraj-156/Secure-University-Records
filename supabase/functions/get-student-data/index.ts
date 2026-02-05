@@ -3,10 +3,9 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// AES-256 decryption using Web Crypto API
 async function getEncryptionKey(): Promise<CryptoKey> {
   const keyString = Deno.env.get('ENCRYPTION_KEY');
   if (!keyString) {
@@ -38,8 +37,7 @@ async function decrypt(ciphertext: string): Promise<string> {
     encryptedData
   );
   
-  const decoder = new TextDecoder();
-  return decoder.decode(decrypted);
+  return new TextDecoder().decode(decrypted);
 }
 
 serve(async (req) => {
@@ -52,7 +50,6 @@ serve(async (req) => {
     const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     
-    // Authenticate user
     const authHeader = req.headers.get('Authorization');
     if (!authHeader?.startsWith('Bearer ')) {
       return new Response(JSON.stringify({ error: 'Unauthorized' }), {
@@ -61,36 +58,29 @@ serve(async (req) => {
       });
     }
 
-    const token = authHeader.replace('Bearer ', '');
-
-    // Create client with user context for JWT validation
     const userClient = createClient(supabaseUrl, supabaseAnonKey, {
       global: { headers: { Authorization: authHeader } },
     });
 
-    // Validate JWT using getClaims for ES256 compatibility
-    const { data: claimsData, error: claimsError } = await userClient.auth.getClaims(token);
+    const { data: userData, error: userError } = await userClient.auth.getUser();
 
-    if (claimsError || !claimsData?.claims) {
-      console.error('JWT validation failed:', claimsError);
+    if (userError || !userData?.user) {
+      console.error('Auth failed:', userError);
       return new Response(JSON.stringify({ error: 'Invalid token' }), {
         status: 401,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    const userId = claimsData.claims.sub as string;
-    const userEmail = claimsData.claims.email as string;
-    console.log(`Authenticated user: ${userId} (${userEmail})`);
+    const userId = userData.user.id;
+    console.log(`User authenticated: ${userId}`);
 
-    // Create service client for database operations
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     const url = new URL(req.url);
     const studentId = url.searchParams.get('student_id');
-    const dataType = url.searchParams.get('type') || 'all'; // 'marks', 'attendance', 'certificates', 'all'
+    const dataType = url.searchParams.get('type') || 'all';
 
-    // Get user role
     const { data: userRole } = await supabase
       .from('user_roles')
       .select('role')
@@ -98,13 +88,11 @@ serve(async (req) => {
       .single();
 
     const role = userRole?.role || 'student';
-    console.log(`Get student data: user=${userId}, role=${role}, student=${studentId}, type=${dataType}`);
+    console.log(`Role: ${role}, Type: ${dataType}`);
 
-    // Determine which student(s) the user can access
     let allowedStudentIds: string[] = [];
 
     if (role === 'admin' || role === 'exam_cell') {
-      // Admin and exam_cell can access all students
       if (studentId) {
         allowedStudentIds = [studentId];
       } else {
@@ -112,7 +100,6 @@ serve(async (req) => {
         allowedStudentIds = students?.map(s => s.id) || [];
       }
     } else if (role === 'faculty') {
-      // Faculty can access students in their assigned departments
       const { data: assignments } = await supabase
         .from('faculty_assignments')
         .select('department_id')
@@ -132,17 +119,12 @@ serve(async (req) => {
           allowedStudentIds = students?.map(s => s.id) || [];
         }
       }
-    } else if (role === 'student') {
-      // Students can only access their own data
-      const { data: student, error: studentError } = await supabase
+    } else {
+      const { data: student } = await supabase
         .from('students')
         .select('id')
         .eq('user_id', userId)
         .single();
-      
-      if (studentError) {
-        console.log(`No student record found for user ${userId}: ${studentError.message}`);
-      }
       
       if (student) {
         allowedStudentIds = [student.id];
@@ -150,7 +132,7 @@ serve(async (req) => {
     }
 
     if (allowedStudentIds.length === 0) {
-      return new Response(JSON.stringify({ error: 'No access to student data' }), {
+      return new Response(JSON.stringify({ error: 'No access' }), {
         status: 403,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -158,14 +140,12 @@ serve(async (req) => {
 
     const result: Record<string, unknown> = {};
 
-    // Fetch and decrypt marks
     if (dataType === 'marks' || dataType === 'all') {
       let marksQuery = supabase
         .from('student_marks')
         .select('*, students(full_name, enrollment_number)')
         .in('student_id', allowedStudentIds);
       
-      // Students can only see published marks
       if (role === 'student') {
         marksQuery = marksQuery.eq('is_published', true);
       }
@@ -177,13 +157,9 @@ serve(async (req) => {
           try {
             const decrypted = await decrypt(mark.marks_encrypted);
             const { marks: actualMarks } = JSON.parse(decrypted);
-            return {
-              ...mark,
-              marks_encrypted: '[ENCRYPTED]', // Don't expose encrypted data
-              marks: actualMarks,
-            };
+            return { ...mark, marks_encrypted: '[ENCRYPTED]', marks: actualMarks };
           } catch {
-            return { ...mark, marks_encrypted: '[ENCRYPTED]', marks: null, decryption_error: true };
+            return { ...mark, marks_encrypted: '[ENCRYPTED]', marks: null };
           }
         }));
       } else {
@@ -191,7 +167,6 @@ serve(async (req) => {
       }
     }
 
-    // Fetch and decrypt attendance
     if (dataType === 'attendance' || dataType === 'all') {
       const { data: attendance } = await supabase
         .from('student_attendance')
@@ -203,13 +178,9 @@ serve(async (req) => {
           try {
             const decrypted = await decrypt(att.status_encrypted);
             const { status } = JSON.parse(decrypted);
-            return {
-              ...att,
-              status_encrypted: '[ENCRYPTED]',
-              status,
-            };
+            return { ...att, status_encrypted: '[ENCRYPTED]', status };
           } catch {
-            return { ...att, status_encrypted: '[ENCRYPTED]', status: null, decryption_error: true };
+            return { ...att, status_encrypted: '[ENCRYPTED]', status: null };
           }
         }));
       } else {
@@ -217,7 +188,6 @@ serve(async (req) => {
       }
     }
 
-    // Fetch and decrypt certificates
     if (dataType === 'certificates' || dataType === 'all') {
       const { data: certificates } = await supabase
         .from('certificates')
@@ -228,13 +198,9 @@ serve(async (req) => {
         result.certificates = await Promise.all(certificates.map(async (cert) => {
           try {
             const decrypted = await decrypt(cert.certificate_data_encrypted);
-            return {
-              ...cert,
-              certificate_data_encrypted: '[ENCRYPTED]',
-              certificate_data: JSON.parse(decrypted),
-            };
+            return { ...cert, certificate_data_encrypted: '[ENCRYPTED]', certificate_data: JSON.parse(decrypted) };
           } catch {
-            return { ...cert, certificate_data_encrypted: '[ENCRYPTED]', certificate_data: null, decryption_error: true };
+            return { ...cert, certificate_data_encrypted: '[ENCRYPTED]', certificate_data: null };
           }
         }));
       } else {
@@ -242,7 +208,6 @@ serve(async (req) => {
       }
     }
 
-    // Log decryption event
     const totalRecords = 
       (result.marks as unknown[] || []).length + 
       (result.attendance as unknown[] || []).length + 
@@ -256,19 +221,9 @@ serve(async (req) => {
         record_count: totalRecords,
         success: true,
       });
-
-      await supabase.from('audit_logs').insert({
-        user_id: userId,
-        action: 'view_student_data',
-        table_name: dataType,
-        details: { 
-          student_ids: allowedStudentIds,
-          record_count: totalRecords,
-        },
-      });
     }
 
-    console.log(`Retrieved ${totalRecords} decrypted records for user ${userId}`);
+    console.log(`Retrieved ${totalRecords} records`);
 
     return new Response(JSON.stringify({ success: true, data: result }), {
       status: 200,
@@ -276,8 +231,7 @@ serve(async (req) => {
     });
 
   } catch (error) {
-    console.error('Get student data error:', error);
-    
+    console.error('Error:', error);
     return new Response(JSON.stringify({ 
       success: false, 
       error: error instanceof Error ? error.message : 'Unknown error' 
