@@ -112,16 +112,10 @@ serve(async (req) => {
         }
       }
     } else {
-      const { data: student } = await supabase
-        .from('students')
-        .select('id')
-        .eq('user_id', userId)
-        .single();
-      
-      if (student) {
-        allowedStudentIds = [student.id];
-        console.log(`Student ID: ${student.id}`);
-      }
+      // Students can view all published records (for searching/viewing others)
+      const { data: students } = await supabase.from('students').select('id');
+      allowedStudentIds = students?.map(s => s.id) || [];
+      console.log(`Student viewing all: ${allowedStudentIds.length} students`);
     }
 
     if (allowedStudentIds.length === 0) {
