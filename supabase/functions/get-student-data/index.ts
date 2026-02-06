@@ -1,30 +1,22 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-// Edge function for retrieving student data with decryption
+// Student data retrieval with decryption - version 4
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
 async function getEncryptionKey(): Promise<CryptoKey> {
   const keyString = Deno.env.get('ENCRYPTION_KEY');
-  if (!keyString) {
-    throw new Error('ENCRYPTION_KEY not configured');
-  }
+  if (!keyString) throw new Error('ENCRYPTION_KEY not configured');
   
   const encoder = new TextEncoder();
   const keyData = encoder.encode(keyString);
   const hashBuffer = await crypto.subtle.digest('SHA-256', keyData);
   
-  return crypto.subtle.importKey(
-    'raw',
-    hashBuffer,
-    { name: 'AES-GCM', length: 256 },
-    false,
-    ['encrypt', 'decrypt']
-  );
+  return crypto.subtle.importKey('raw', hashBuffer, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
 }
 
 async function decrypt(ciphertext: string): Promise<string> {
@@ -33,16 +25,13 @@ async function decrypt(ciphertext: string): Promise<string> {
   const iv = combined.slice(0, 12);
   const encryptedData = combined.slice(12);
   
-  const decrypted = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv },
-    key,
-    encryptedData
-  );
-  
+  const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, encryptedData);
   return new TextDecoder().decode(decrypted);
 }
 
 serve(async (req) => {
+  console.log('get-student-data: Request received');
+  
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
@@ -54,6 +43,7 @@ serve(async (req) => {
     
     const authHeader = req.headers.get('Authorization');
     if (!authHeader?.startsWith('Bearer ')) {
+      console.log('No auth header');
       return new Response(JSON.stringify({ error: 'Unauthorized' }), {
         status: 401,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -75,7 +65,7 @@ serve(async (req) => {
     }
 
     const userId = userData.user.id;
-    console.log(`User authenticated: ${userId}`);
+    console.log(`Authenticated: ${userId}`);
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
@@ -130,15 +120,19 @@ serve(async (req) => {
       
       if (student) {
         allowedStudentIds = [student.id];
+        console.log(`Student ID: ${student.id}`);
       }
     }
 
     if (allowedStudentIds.length === 0) {
-      return new Response(JSON.stringify({ error: 'No access' }), {
-        status: 403,
+      console.log('No access');
+      return new Response(JSON.stringify({ success: true, data: { marks: [], attendance: [], certificates: [] } }), {
+        status: 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
+
+    console.log(`Processing ${allowedStudentIds.length} students`);
 
     const result: Record<string, unknown> = {};
 
@@ -153,6 +147,7 @@ serve(async (req) => {
       }
 
       const { data: marks } = await marksQuery;
+      console.log(`Marks: ${marks?.length || 0}`);
       
       if (marks && marks.length > 0) {
         result.marks = await Promise.all(marks.map(async (mark) => {
@@ -175,6 +170,8 @@ serve(async (req) => {
         .select('*, students(full_name, enrollment_number)')
         .in('student_id', allowedStudentIds);
       
+      console.log(`Attendance: ${attendance?.length || 0}`);
+      
       if (attendance && attendance.length > 0) {
         result.attendance = await Promise.all(attendance.map(async (att) => {
           try {
@@ -195,6 +192,8 @@ serve(async (req) => {
         .from('certificates')
         .select('*, students(full_name, enrollment_number)')
         .in('student_id', allowedStudentIds);
+      
+      console.log(`Certificates: ${certificates?.length || 0}`);
       
       if (certificates && certificates.length > 0) {
         result.certificates = await Promise.all(certificates.map(async (cert) => {
@@ -225,7 +224,7 @@ serve(async (req) => {
       });
     }
 
-    console.log(`Retrieved ${totalRecords} records`);
+    console.log(`Done: ${totalRecords} records`);
 
     return new Response(JSON.stringify({ success: true, data: result }), {
       status: 200,
