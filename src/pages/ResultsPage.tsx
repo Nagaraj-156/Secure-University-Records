@@ -201,12 +201,8 @@ export default function ResultsPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    {canManageRecords && (
-                      <>
-                        <TableHead>Enrollment</TableHead>
-                        <TableHead>Student</TableHead>
-                      </>
-                    )}
+                    <TableHead>Enrollment</TableHead>
+                    <TableHead>Student</TableHead>
                     <TableHead>Subject</TableHead>
                     <TableHead>Exam Type</TableHead>
                     <TableHead>Semester</TableHead>
@@ -221,14 +217,10 @@ export default function ResultsPage() {
                     const grade = getGrade(mark.marks, mark.max_marks);
                     return (
                       <TableRow key={mark.id} className="table-row-hover">
-                        {canManageRecords && (
-                          <>
-                            <TableCell className="font-mono text-sm">
-                              {mark.students?.enrollment_number || '-'}
-                            </TableCell>
-                            <TableCell>{mark.students?.full_name || '-'}</TableCell>
-                          </>
-                        )}
+                        <TableCell className="font-mono text-sm">
+                          {mark.students?.enrollment_number || '-'}
+                        </TableCell>
+                        <TableCell className="font-medium">{mark.students?.full_name || '-'}</TableCell>
                         <TableCell className="font-medium">{mark.subject_name}</TableCell>
                         <TableCell>
                           <Badge variant="secondary" className="capitalize">
