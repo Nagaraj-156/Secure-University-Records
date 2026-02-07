@@ -248,12 +248,8 @@ export default function AttendancePage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    {canManageRecords && (
-                      <>
-                        <TableHead>Enrollment</TableHead>
-                        <TableHead>Student</TableHead>
-                      </>
-                    )}
+                    <TableHead>Enrollment</TableHead>
+                    <TableHead>Student</TableHead>
                     <TableHead>Subject</TableHead>
                     <TableHead>Date</TableHead>
                     <TableHead>Semester</TableHead>
@@ -264,14 +260,10 @@ export default function AttendancePage() {
                 <TableBody>
                   {filteredAttendance.map((record) => (
                     <TableRow key={record.id} className="table-row-hover">
-                      {canManageRecords && (
-                        <>
-                          <TableCell className="font-mono text-sm">
-                            {record.students?.enrollment_number || '-'}
-                          </TableCell>
-                          <TableCell>{record.students?.full_name || '-'}</TableCell>
-                        </>
-                      )}
+                      <TableCell className="font-mono text-sm">
+                        {record.students?.enrollment_number || '-'}
+                      </TableCell>
+                      <TableCell className="font-medium">{record.students?.full_name || '-'}</TableCell>
                       <TableCell className="font-medium">{record.subject_name}</TableCell>
                       <TableCell>
                         {format(new Date(record.attendance_date), 'dd MMM yyyy')}
