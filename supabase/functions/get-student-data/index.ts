@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-// Student data retrieval with decryption - version 4
+// Student data retrieval with decryption - version 5
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -84,33 +84,15 @@ serve(async (req) => {
 
     let allowedStudentIds: string[] = [];
 
-    if (role === 'admin' || role === 'exam_cell') {
+    // Admin, Faculty, and Exam Cell can view all student records
+    if (role === 'admin' || role === 'exam_cell' || role === 'faculty') {
       if (studentId) {
         allowedStudentIds = [studentId];
       } else {
         const { data: students } = await supabase.from('students').select('id');
         allowedStudentIds = students?.map(s => s.id) || [];
       }
-    } else if (role === 'faculty') {
-      const { data: assignments } = await supabase
-        .from('faculty_assignments')
-        .select('department_id')
-        .eq('faculty_user_id', userId);
-      
-      const deptIds = assignments?.map(a => a.department_id) || [];
-      
-      if (deptIds.length > 0) {
-        const { data: students } = await supabase
-          .from('students')
-          .select('id')
-          .in('department_id', deptIds);
-        
-        if (studentId && students?.some(s => s.id === studentId)) {
-          allowedStudentIds = [studentId];
-        } else if (!studentId) {
-          allowedStudentIds = students?.map(s => s.id) || [];
-        }
-      }
+      console.log(`${role} viewing all: ${allowedStudentIds.length} students`);
     } else {
       // Students can view all published records (for searching/viewing others)
       const { data: students } = await supabase.from('students').select('id');
